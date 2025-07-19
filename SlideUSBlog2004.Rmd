@@ -1,0 +1,496 @@
+---
+title: '*Analisi della rete dei blog politici USA*'
+author: "Gabriele Fontanot"
+date: "`r Sys.Date()`"
+output:
+  ioslides_presentation:
+    css: /Users/gabri/OneDrive/Desktop/Università/Magistrale/Primo anno/Advanced Data science/Progetto/style.css"
+    incremental: no
+  slidy_presentation:
+    incremental: no
+editor_options:
+  chunk_output_type: inline
+---
+
+```{r, include=FALSE}
+knitr::opts_chunk$set(
+  warning = FALSE,
+  message = FALSE,
+  error = FALSE
+)
+```
+
+## 1. Introduzione e motivazione
+- Le **reti sociali online** aiutano a comprendere fenomeni di **opinione**, di **diffusione delle informazioni** e di **polarizzazione**
+- Questo studio analizza la **blogosfera politica americana del 2004** come caso emblematico
+- L’obiettivo è indagare come la **struttura delle connessioni** rifletta (o meno) la **divisione ideologica** all'interno della società digitale presa in analisi
+
+**Domande di ricerca:**
+
+- La struttura delle connessioni riflette la **polarizzazione politica**?
+
+- Chi sono i blog più **influenti** o **centrali** nella rete?
+
+- Esistono blog **“ponte”** tra le fazioni?
+
+- Le **community** individuate coincidono con gli schieramenti politici?
+
+- La rete mostra **proprietà globali** tipiche delle reti sociali reali?
+
+Queste domande guideranno l'analisi presentata nelle prossime slide.
+
+## 2. Descrizione del dataset e prime informazioni
+
+- **Dataset**: blog politici USA, raccolti nel **2004** (Adamic & Glance) --> reale e ben documentato
+- **Nodi**: blog, con orientamento politico (*liberal = 0/blu, conservative = 1/rosso*)
+- **Archi**: link tra blog, **rete diretta**
+
+```{r setup, include=FALSE, message=FALSE, warning=FALSE}
+library(igraph)
+library(ggraph)
+library(ggplot2)
+```
+
+```{r echo=FALSE}
+g <- read_graph("C:/Users/gabri/OneDrive/Desktop/Università/Magistrale/Primo anno/Advanced Data science/Progetto/polblogs.gml", format = "gml")
+
+library(knitr)
+comp <- components(g)
+num_componenti <- comp$no
+dim_componente_principale <- max(comp$csize)
+nodi_isolati <- sum(degree(g, mode = "all") == 0)
+info_tab <- data.frame(
+  Metadato = c("Numero nodi", "Numero archi", "Blog liberal (0)", "Blog conservative (1)", "Componenti connesse", "Nodi del Core", "Nodi isolati"),
+  Valore = c(vcount(g), ecount(g), sum(V(g)$value == 0), sum(V(g)$value == 1), num_componenti, dim_componente_principale, nodi_isolati)
+)
+kable(info_tab, caption = "Caratteristiche principali")
+
+```
+- Grande **componente principale** (“core” connesso)
+- Molti **nodi isolati** e **piccoli gruppi marginali**
+
+## 2.1 Visualizzazione della struttura
+
+```{r echo=FALSE}
+
+set.seed(123) #setto disposizione nodi
+plot(
+  g,
+  layout = layout_with_fr, #layout Fruchterman-Reingold
+  vertex.label = NA,
+  vertex.size = 5,
+  vertex.color = ifelse(V(g)$value == 0, "blue", "red"),
+  edge.color = "grey40",            # colore archi
+  edge.width = 0.8,                 # spessore archi
+  edge.arrow.size = 0.2,            # grandezza della freccia
+  main = "Rete intera"
+)
+
+legend(
+  "topright", legend = c("Liberal", "Conservative"),
+  col = c("blue", "red"), pch = 19, pt.cex = 1.2, bty = "n"
+)
+
+
+# Componente principale
+# comp già calcolata
+giant <- induced_subgraph(g, which(comp$membership == which.max(comp$csize)))
+
+set.seed(123)
+plot(
+  giant,
+  layout = layout_with_fr,
+  vertex.label = NA,
+  vertex.size = 5,
+  vertex.color = ifelse(V(giant)$value == 0, "blue", "red"),
+  edge.color = "grey40",
+  edge.width = 0.8,
+  edge.arrow.size = 0.2,
+  main = "Componente principale"
+)
+
+legend(
+  "topright", legend = c("Liberal", "Conservative"),
+  col = c("blue", "red"), pch = 19, pt.cex = 1.2, bty = "n"
+)
+
+```
+
+- La **componente principale** (“core”) raccoglie la maggioranza dei blog attivi e delle interazioni
+
+- Le **componenti periferiche** sono costituite da piccoli gruppi o nodi isolati, con ruolo **marginale** nella struttura e dinamica globale
+
+- I **colori** mostrano l’**aggregazione politica**, ma i due gruppi non sono separati in modo assoluto: **presenti dei collegamenti trasversali**
+
+Nei passaggi delle prossime slide vedremo come **queste connessioni** e l’**aggregazione politica** influenzano le proprietà della rete.
+
+## 3. Analisi locale: Centralità
+- L'**Obiettivo** è identificare i blog più influenti tramite:
+  - **In-degree** (popolarità)
+  - **Betweenness** (ponte tra gruppi)
+  - **PageRank** (autorevolezza globale)
+
+```{r echo=FALSE}
+#Analisi delle metriche di centralità
+
+deg_in <- degree(g, mode = "in")
+betw <- betweenness(g, directed = TRUE)
+pager <- page_rank(g, directed = TRUE)$vector
+
+#ordino i nodi e scelgo gli indici
+top_in_indices <- order(deg_in, decreasing = TRUE)[1:10]
+top_betw_indices <- order(betw, decreasing = TRUE)[1:10]
+top_pager_indices <- order(pager, decreasing = TRUE)[1:10]
+
+#creo i dataframe per le top10 delle misure
+top_in <- data.frame(
+  label = V(g)$label[top_in_indices],
+  in_degree = deg_in[top_in_indices],
+  orientamento = V(g)$value[top_in_indices]
+)
+top_betw <- data.frame(
+  label = V(g)$label[top_betw_indices],
+  betweenness = betw[top_betw_indices],
+  orientamento = V(g)$value[top_betw_indices]
+)
+top_pager <- data.frame(
+  label = V(g)$label[top_pager_indices],
+  pagerank = pager[top_pager_indices],
+  orientamento = V(g)$value[top_pager_indices]
+)
+
+```
+Visualizziamo i risultati con dei grafici rappresentativi per i **top 10 blog** per le tre misure appena discusse, caratterizzati per orientamento politico.
+```{r echo=FALSE}
+
+par(mar = c(8, 8, 4, 2))
+par(mgp = c(4, 0.5, 0))
+
+bp_in <- barplot(
+  top_in$in_degree,
+  names.arg = rep("", length(top_in$label)), #tolgo etichette sotto
+  las = 2,
+  cex.names = 0.8,
+  col = ifelse(top_in$orientamento == 0, "blue", "red"),
+  main = "Top 10 Blog per In-degree",
+  ylab = "In-degree",
+  ylim = c(0, max(top_in$in_degree) * 1.2)
+)
+text( #per etichette
+  x = bp_in, y = par("usr")[3] - 0.02 * diff(par("usr")[3:4]),
+  labels = top_in$label, srt = 45, adj = 1, xpd = TRUE, cex = 0.8
+)
+legend("topright", legend = c("Liberal", "Conservative"), fill = c("blue", "red"))
+
+
+par(mar = c(8, 8, 4, 2))  # (bottom, left, top, right)
+par(mgp = c(4, 0.9, 0))
+
+bp_betw <- barplot(
+  top_betw$betweenness,
+  names.arg = rep("", length(top_betw$label)),
+  las = 2,
+  cex.names = 0.8,
+  col = ifelse(top_betw$orientamento == 0, "blue", "red"),
+  main = "Top 10 Blog per Betweenness",
+  ylab = "Betweenness",
+  ylim = c(0, max(top_betw$betweenness) * 1.2)
+)
+text(
+  x = bp_betw, y = par("usr")[3] - 0.02 * diff(par("usr")[3:4]),
+  labels = top_betw$label, srt = 45, adj = 1, xpd = TRUE, cex = 0.8
+)
+legend("topright", legend = c("Liberal", "Conservative"), fill = c("blue", "red"))
+
+
+
+par(mar = c(8, 8, 4, 2))  # (bottom, left, top, right)
+par(mgp = c(4, 0.5, 0)) # etichetta asse
+
+
+bp <- barplot(
+  top_pager$pagerank,
+  names.arg = rep("", length(top_pager$label)),
+  las = 2,
+  cex.names = 0.8,
+  col = ifelse(top_pager$orientamento == 0, "blue", "red"),
+  main = "Top 10 Blog per PageRank",
+  ylab = "PageRank",
+  ylim = c(0, max(top_pager$pagerank) * 1.2)
+)
+text(
+  x = bp, y = par("usr")[3] - 0.02 * diff(par("usr")[3:4]), 
+  labels = top_pager$label, srt = 45, adj = 1, xpd = TRUE, cex = 0.8
+)
+legend("topright", legend = c("Liberal", "Conservative"), fill = c("blue", "red"))
+
+```
+
+Osserviamo che i **ruoli di centralità** non sono concentrati su un solo schieramento: **entrambe le fazioni** presentano **blog chiave**, e non sempre i più citati sono anche i più influenti nella rete nel suo complesso.
+
+## 4. Community detection: Infomap
+
+**Infomap** rileva le comunità ottimizzando la compressione delle traiettorie casuali sulla rete.
+
+**Sull'intera rete:**
+
+- Risultato frammentato a causa di tanti **nodi isolati** e **micro-cluster**
+
+```{r echo=FALSE}
+comm_infomap <- cluster_infomap(g)
+V(g)$community <- as.factor(membership(comm_infomap))
+ggraph(g, layout = "fr") +
+  geom_edge_link(alpha = 1, width = 0.05) +
+  geom_node_point(aes(color = community), size = 0.5) +
+  theme_void() +
+  ggtitle("Community Detection - Intera Rete") +
+  theme(legend.position = "none")
+```
+
+**Sulla componente principale:**
+
+- I principali cluster sono **ben separati**, ma ognuno contiene sia **liberal** che **conservative**
+
+```{r echo=FALSE}
+
+# comp e giant le ho già calcolate
+# Infomap su giant
+set.seed(123)
+comm_giant <- cluster_infomap(giant)
+V(giant)$community <- as.character(membership(comm_giant))
+
+tab <- sort(table(V(giant)$community), decreasing = TRUE)
+top_clusters <- names(tab)[1:4]
+
+V(giant)$comm_main <- ifelse(V(giant)$community %in% top_clusters, #se è presente, altrimenti altro
+                             V(giant)$community, "altro")
+
+palette <- c( #colori per i 4 cluster 
+  setNames(
+    c("#E41A1C", "#377EB8", "#4DAF4A", "#FF7F00"),
+    top_clusters
+  ),
+  "altro" = "#BBBBBB"
+)
+
+ggraph(giant, layout = "fr") +
+  geom_edge_link(alpha = 0.07, width = 0.08) +
+  geom_node_point(aes(color = comm_main), size = 1.2) +
+  scale_color_manual(values = palette, name = "Cluster") +
+  theme_void() +
+  ggtitle(sprintf("Community detection - Componente gigante",
+                  paste(top_clusters, collapse = ", "))) +
+  theme(legend.position = "right")
+
+```
+
+## 4.1 Principali cluster e modularità
+
+```{r echo=FALSE}
+
+# creo un dataframe vuoto, per poi riempirlo con il ciclo
+# sfrutto top_clusters che ha già i primi 4
+
+tab_cluster <- data.frame(
+  Cluster = character(),
+  N_nodi = integer(),
+  Liberal = integer(),
+  Conservative = integer(),
+  stringsAsFactors = FALSE
+)
+for (c in top_clusters) {
+  idx <- which(V(giant)$community == c)
+  n_total <- length(idx)
+  n_lib <- sum(V(giant)$value[idx] == 0)
+  n_con <- sum(V(giant)$value[idx] == 1)
+  tab_cluster <- rbind(tab_cluster, data.frame(
+    Cluster = c,
+    N_nodi = n_total,
+    Liberal = n_lib,
+    Conservative = n_con
+  ))
+}
+
+kable(tab_cluster, caption = "Suddivisione politica nei 4 cluster principali del \"core\"")
+
+mod_val_giant <- modularity(comm_giant)
+cat(sprintf("Modularità globale della componente gigante: %.3f", mod_val_giant))
+
+```
+
+- La **modularità bassa** conferma che **la polarizzazione è presente, ma non estrema**: i blog di orientamento opposto non sono completamente separati
+- Nei principali **cluster** coesistono **entrambe le ideologie politiche**
+
+
+## 5. Analisi globale e confronto tra rete totale e componente principale
+
+```{r echo=FALSE}
+
+#comp e giant le ho già
+diametro_tot <- diameter(g)
+diametro_giant <- diameter(giant)
+pathlen_tot <- mean_distance(g)
+pathlen_giant <- mean_distance(giant)
+reciprocity_tot <- reciprocity(g)
+reciprocity_giant <- reciprocity(giant)
+assortativita_tot <- assortativity(g, as.numeric(V(g)$value), directed = TRUE)
+assortativita_giant <- assortativity(giant, as.numeric(V(giant)$value), directed = TRUE)
+
+nodi_tot <- vcount(g)
+nodi_giant <- vcount(giant)
+archi_tot <- ecount(g)
+archi_giant <- ecount(giant)
+componenti_tot <- comp$no
+componenti_giant <- 1
+modularita_tot <- modularity(comm_infomap)
+modularita_giant <- modularity(comm_giant)
+
+summary_tab <- data.frame(
+  Metrica = c(
+    "Numero nodi", "Numero archi", "Componenti connesse",
+    "Diametro", "Lunghezza media del cammino", "Reciprocità",
+    "Assortatività (politica)", "Modularità (Infomap)"
+  ),
+  "Rete completa" = c(
+    as.integer(nodi_tot), as.integer(archi_tot), as.integer(componenti_tot),
+    as.integer(diametro_tot), round(pathlen_tot,2), round(reciprocity_tot,2),
+    round(assortativita_tot,3), round(modularita_tot,3)
+  ),
+  "Componente principale" = c(
+    as.integer(nodi_giant), as.integer(archi_giant), as.integer(componenti_giant),
+    as.integer(diametro_giant), round(pathlen_giant,2), round(reciprocity_giant,2),
+    round(assortativita_giant,3), round(modularita_giant,3)
+  )
+)
+
+knitr::kable(summary_tab, caption = "Confronto delle metriche globali: rete completa vs componente principale")
+
+```
+- La **quasi totalità** delle proprietà strutturali della rete è **determinata dalla componente principale** 
+
+- Le **metriche** calcolate sull’intera rete e sulla componente principale sono **praticamente identiche** 
+
+- La completa maggioranza dei **nodi attivi** e degli **archi** si concentra nel **nucleo connesso** della blogosfera
+
+- I **nodi isolati o periferici** hanno **impatto trascurabile sulle proprietà globali**
+
+## 5.1 Metriche
+
+- **Diametro**: massima distanza tra due blog → indica l'estensione massima della rete
+  - **Basso**: tutti i nodi **raggiungibili in pochi passi**
+
+- **Lunghezza media del cammino**: media delle distanze minime → quanto sono “vicini” mediamente i blog
+  - **Basso**: rete molto **compatta**
+
+- **Assortatività**: tendenza a collegarsi a blog simili → segregazione politica
+  - **Alta**: blog si collegano tra simili, con **tendenza alla polarizzazione**
+
+- **Modularità**: separazione netta tra gruppi → quanto sono divise le fazioni
+  - **Bassa**: le divisioni **non sono nette** ma comunicano tra loro
+
+- **Reciprocità**: relazioni bidirezionali → dialogo reciproco vs. monologo
+  - Una **parte significativa** dei **link** è **di ritorno**, con conversazioni o riconoscimenti reciproci tra i vari blog
+
+## 5.2 Distribuzione dei gradi per nodo
+
+```{r echo=FALSE}
+
+par(mfrow = c(1,3), mar = c(7,6,2,1))
+
+deg_in  <- degree(g, mode = "in")
+deg_out <- degree(g, mode = "out")
+deg_all <- degree(g, mode = "all")
+
+hist(deg_in, breaks = 50, col = "#4e79a7", border = "white",
+     main = "Distribuzione in-degree", xlab = "In-degree", ylab = "Frequenza",
+     cex.main = 1.2, cex.lab = 1.1, cex.axis = 1)
+hist(deg_out, breaks = 50, col = "#f28e2b", border = "white",
+     main = "Distribuzione out-degree", xlab = "Out-degree", ylab = "", 
+     cex.main = 1.2, cex.lab = 1.1, cex.axis = 1)
+hist(deg_all, breaks = 50, col = "#3C78D8", border = "white",
+     main = "Distribuzione grado totale", xlab = "Grado (in+out)", ylab = "", 
+     cex.main = 1.2, cex.lab = 1.1, cex.axis = 1)
+
+# Risetto il layout
+par(mfrow=c(1,1))
+
+```
+
+- La maggior parte dei blog ha **pochi collegamenti** in entrata/uscita
+- La distribuzione mostra una **coda lunga**: pochissimi blog hanno un grado molto elevato (super-hub), mentre la maggior parte ha pochi collegamenti
+
+- Alcuni blog hanno un **in-degree molto alto**: sono i più citati, spesso veri ‘hub’ della rete
+
+- La distribuzione è **fortemente sbilanciata**: pochissimi blog sono collegati a moltissimi altri, la maggioranza invece resta marginale
+
+Tutto questo cosa significa?
+
+## 5.3 Scale-free e Small world
+
+**La rete è “scale-free”**
+
+- La **distribuzione dei gradi** segue una **power-law**
+- Quasi tutti i blog hanno pochi collegamenti, un numero minimo ne hanno moltissimi
+- Questo favorisce la **diffusione rapida** delle idee, ma anche la concentrazione del potere informativo
+
+**La rete è anche “small-world”**
+
+- La distanza media tra due blog è molto bassa, tipica dei social network
+- La maggior parte dei nodi è raggiungibile in **pochissimi passaggi**
+- Permette una **rapida propagazione delle informazioni** e facilita l’interazione tra punti anche lontani
+
+La combinazione di proprietà ‘scale-free’ e ‘small-world’ rende la blogosfera un ambiente ideale per la rapida diffusione delle informazioni, ma la rende anche **vulnerabile al controllo o alla rimozione dei nodi più centrali**.
+Queste sono due caratteristiche riscontrate in moltissime reti sociali reali, dai blog ai social network moderni come Facebook e X.
+
+## 6. Conclusioni
+
+L’analisi condotta permette di rispondere alle domande di ricerca iniziali, fornendo una visione articolata della blogosfera politica americana nel 2004. In sintesi:
+
+- **Polarizzazione?**
+  - Sì, ma non totale: due aree principali + collegamenti tra gruppi
+
+- **Chi sono i blog centrali?**
+  - Ruoli chiave in entrambi gli schieramenti (liberal e conservative)
+
+- **Blog “ponte”?**
+  - Sì: alcuni blog collegano le fazioni (betweenness alta)
+
+- **Community = schieramenti?**
+  - Solo parzialmente: modularità bassa, gruppi misti
+
+- **Proprietà tipiche delle reti sociali?**
+  - Sì: piccolo mondo, scale-free, core fortemente connesso
+
+## 7. Limiti e sviluppi futuri
+
+- **Limiti dello studio**:
+  - L’analisi si basa su un’istantanea della blogosfera (2004) e non considera l’**evoluzione temporale**
+  - Le community e i collegamenti sono studiati solo a livello strutturale, senza analizzare il **contenuto** dei blog
+
+- **Prospettive e sviluppi futuri**:
+  - Estendere l’analisi a una dimensione **temporale** futura, osservando come cambia la struttura e la polarizzazione nel tempo
+  - Integrare informazioni sul **contenuto dei blog** (analisi semantica, sentiment analysis)
+  - Applicare metodi di **community detection** più avanzati o comparare algoritmi diversi
+  - Provare a replicare l'analisi a livello dei **social network moderni**, come X e Facebook
+
+## Riferimenti
+
+- Adamic, L. A., & Glance, N. (2005). *The political blogosphere and the 2004 US Election*. WWW-2005 Workshop on the Weblogging Ecosystem.  
+- Dataset: [http://www-personal.umich.edu/~mejn/netdata/](http://www-personal.umich.edu/~mejn/netdata/)
+
+<div style="text-align:center">
+  <img src="C:/Users/gabri/OneDrive/Desktop/Università/Magistrale/Primo anno/Advanced Data science/Progetto/Immagini/mappa.png" style="width:520px;"/>
+    <figcaption style="font-size: 0.9em; color: #444; margin-top:8px;">
+    Mappa degli esiti delle elezioni USA del 2004 per stato
+  </figcaption>
+</div>
+
+---
+<div style="text-align:center">
+  <b><font size="10" color="black"> Grazie per l'attenzione! </font></b>
+</div>
+
+
+<div style="text-align:center">
+  <img src="C:/Users/gabri/OneDrive/Desktop/Università/Magistrale/Primo anno/Advanced Data science/Progetto/Immagini/trump.jpg" style="width:600px;"/>
+</div>
